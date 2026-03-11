@@ -675,7 +675,7 @@ if('serviceWorker' in navigator && location.protocol!=='file:'){
       <div class="setting-row" style="margin-top:12px">
         <div>
           <div class="setting-label">Hugging Face APIキー</div>
-          <div class="setting-desc">高品質AI画像生成に使用（<a href="https://huggingface.co/settings/tokens" target="_blank" style="color:var(--accent)">トークンを取得</a>）</div>
+          <div class="setting-desc">高品質AI画像生成に使用（<a href="https://huggingface.co/settings/tokens/new?ownUserPermissions=inference.serverless.write&tokenType=fineGrained" target="_blank" style="color:var(--accent)">トークンを取得</a>）</div>
         </div>
         <div style="flex:1;max-width:260px;display:flex;gap:6px;align-items:center">
           <input type="password" id="hfApiKey" placeholder="hf_..."
@@ -1291,10 +1291,9 @@ function onAutoRefillChange(){
 
 // HuggingFace モデル一覧（優先順、上から順に試行）
 const HF_MODELS=[
-  {id:'runwayml/stable-diffusion-v1-5',name:'SD 1.5',gated:false},
-  {id:'CompVis/stable-diffusion-v1-4',name:'SD 1.4',gated:false},
+  {id:'ByteDance/SDXL-Lightning',name:'SDXL-Lightning',gated:false},
   {id:'stabilityai/stable-diffusion-xl-base-1.0',name:'SDXL Base',gated:false},
-  {id:'black-forest-labs/FLUX.1-schnell',name:'FLUX.1-schnell',gated:true},
+  {id:'CompVis/stable-diffusion-v1-4',name:'SD 1.4',gated:false},
   {id:'black-forest-labs/FLUX.1-dev',name:'FLUX.1-dev',gated:true},
 ];
 
@@ -1315,7 +1314,7 @@ async function runConnectionTest(){
       try{
         const ctrl=new AbortController();
         const tmr=setTimeout(()=>ctrl.abort(),30000);
-        const resp=await fetch('https://router.huggingface.co/models/'+model.id,{
+        const resp=await fetch('https://router.huggingface.co/hf-inference/models/'+model.id,{
           method:'POST',
           headers:{
             'Authorization':'Bearer '+hfKey,
@@ -1364,7 +1363,7 @@ function saveHfKey(){
   if(badge)badge.style.display='none';
   if(!key){localStorage.removeItem('pomo_hf_api_key');return;}
   if(!key.startsWith('hf_')){
-    alert('⚠️ HuggingFace APIキーは「hf_」で始まる文字列です。\n\nhttps://huggingface.co/settings/tokens\nで正しいトークンを取得してください。');
+    alert('⚠️ HuggingFace APIキーは「hf_」で始まる文字列です。\n\nhttps://huggingface.co/settings/tokens/new?ownUserPermissions=inference.serverless.write&tokenType=fineGrained\nで正しいトークンを取得してください。');
     return;
   }
   localStorage.setItem('pomo_hf_api_key',key);
@@ -1382,7 +1381,7 @@ async function generateWithHuggingFace(prompt){
       console.log('[HuggingFace] '+model.name+' で生成中...');
       const ctrl=new AbortController();
       const timer=setTimeout(()=>ctrl.abort(),120000); // 120秒タイムアウト
-      const resp=await fetch('https://router.huggingface.co/models/'+model.id,{
+      const resp=await fetch('https://router.huggingface.co/hf-inference/models/'+model.id,{
         method:'POST',
         headers:{
           'Authorization':'Bearer '+key,
