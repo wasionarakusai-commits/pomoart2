@@ -2651,8 +2651,8 @@ const SD_API_BASE = '';
 // ============================================================
 function pollinationsURL(prompt, width, height, opts){
   opts=opts||{};
-  // プロンプトが長すぎるとURLエラーになるので最大800文字に制限
-  const trimmed=prompt.length>800?prompt.substring(0,800):prompt;
+  // プロンプトを200文字に制限（短い方がレート制限に引っかかりにくい）
+  const trimmed=prompt.length>200?prompt.substring(0,200):prompt;
   let url='https://image.pollinations.ai/prompt/'+encodeURIComponent(trimmed);
   url+='?width='+width+'&height='+height;
   url+='&nologo=true';
@@ -2730,20 +2730,21 @@ async function generateOneSD(prompt, mode, artName){
   }
 
   // 3) Pollinations.ai フォールバック（fetchでblob取得→dataURL化）— 429リトライ付き
-  const MAX_RETRIES=4;
+  const MAX_RETRIES=5;
+  const WAIT_SECS=[10,20,30,45,60];
   for(let attempt=1;attempt<=MAX_RETRIES;attempt++){
     // リトライごとに新しいseedでURL生成
-    const pUrl=pollinationsURL(prompt, 1024, 1024, {enhance:true});
+    const pUrl=pollinationsURL(prompt, 512, 512, {});
     dbgLog('[Poll] 試行'+attempt+'/'+MAX_RETRIES+' URL長='+pUrl.length);
     try{
       const ctrl=new AbortController();
-      const tmr=setTimeout(()=>ctrl.abort(),90000);
+      const tmr=setTimeout(()=>ctrl.abort(),120000);
       const resp=await fetch(pUrl,{signal:ctrl.signal});
       clearTimeout(tmr);
       dbgLog('[Poll] HTTP '+resp.status+' type='+resp.headers.get('content-type'));
-      if(resp.status===429){
-        const wait=attempt*5;
-        dbgLog('[Poll] レート制限 → '+wait+'秒待機してリトライ…');
+      if(resp.status===429||resp.status===500||resp.status===503){
+        const wait=WAIT_SECS[attempt-1]||30;
+        dbgLog('[Poll] '+resp.status+' → '+wait+'秒待機してリトライ…');
         await new Promise(r=>setTimeout(r,wait*1000));
         continue;
       }
