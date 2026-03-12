@@ -2729,38 +2729,51 @@ async function generateOneSD(prompt, mode, artName){
     dbgLog('[HF] 例外: '+(e.message||e));
   }
 
-  // 3) Pollinations.ai フォールバック（fetchでblob取得→dataURL化）
-  const pUrl=pollinationsURL(prompt, 1024, 1024, {enhance:true});
-  dbgLog('[Poll] fetch開始… URL長='+pUrl.length);
-  try{
-    const ctrl=new AbortController();
-    const tmr=setTimeout(()=>ctrl.abort(),90000); // 90秒タイムアウト
-    const resp=await fetch(pUrl,{signal:ctrl.signal});
-    clearTimeout(tmr);
-    dbgLog('[Poll] HTTP '+resp.status+' type='+resp.headers.get('content-type'));
-    if(resp.ok){
-      const blob=await resp.blob();
-      dbgLog('[Poll] blob size='+blob.size+' type='+blob.type);
-      if(blob.size>1000 && blob.type.startsWith('image/')){
-        const dataUrl=await new Promise((resolve,reject)=>{
-          const reader=new FileReader();
-          reader.onload=()=>resolve(reader.result);
-          reader.onerror=reject;
-          reader.readAsDataURL(blob);
-        });
-        dbgLog('[Poll] 成功! '+Math.round(blob.size/1024)+'KB → dataURL');
-        return {url:dataUrl, name:artName, source:'pollinations'};
+  // 3) Pollinations.ai フォールバック（fetchでblob取得→dataURL化）— 429リトライ付き
+  const MAX_RETRIES=4;
+  for(let attempt=1;attempt<=MAX_RETRIES;attempt++){
+    // リトライごとに新しいseedでURL生成
+    const pUrl=pollinationsURL(prompt, 1024, 1024, {enhance:true});
+    dbgLog('[Poll] 試行'+attempt+'/'+MAX_RETRIES+' URL長='+pUrl.length);
+    try{
+      const ctrl=new AbortController();
+      const tmr=setTimeout(()=>ctrl.abort(),90000);
+      const resp=await fetch(pUrl,{signal:ctrl.signal});
+      clearTimeout(tmr);
+      dbgLog('[Poll] HTTP '+resp.status+' type='+resp.headers.get('content-type'));
+      if(resp.status===429){
+        const wait=attempt*5;
+        dbgLog('[Poll] レート制限 → '+wait+'秒待機してリトライ…');
+        await new Promise(r=>setTimeout(r,wait*1000));
+        continue;
       }
-      dbgLog('[Poll] 画像でない — フォールバック');
-    }else{
-      dbgLog('[Poll] HTTPエラー '+resp.status);
+      if(resp.ok){
+        const blob=await resp.blob();
+        dbgLog('[Poll] blob size='+blob.size+' type='+blob.type);
+        if(blob.size>1000 && blob.type.startsWith('image/')){
+          const dataUrl=await new Promise((resolve,reject)=>{
+            const reader=new FileReader();
+            reader.onload=()=>resolve(reader.result);
+            reader.onerror=reject;
+            reader.readAsDataURL(blob);
+          });
+          dbgLog('[Poll] 成功! '+Math.round(blob.size/1024)+'KB → dataURL');
+          return {url:dataUrl, name:artName, source:'pollinations'};
+        }
+        dbgLog('[Poll] 画像でない — フォールバック');
+        break;
+      }else{
+        dbgLog('[Poll] HTTPエラー '+resp.status);
+        break;
+      }
+    }catch(e){
+      dbgLog('[Poll] fetch失敗: '+e.message);
+      break;
     }
-  }catch(e){
-    dbgLog('[Poll] fetch失敗: '+e.message);
   }
-  // 4) 最終フォールバック: URLを直接返す（img.srcでロード試行）
-  dbgLog('[Poll] 直接URL返却（最終手段）');
-  return {url:pUrl, name:artName, source:'pollinations-direct'};
+  // 4) 最終フォールバック: Canvas描画に任せる
+  dbgLog('[Poll] 全リトライ失敗 → Canvas描画');
+  return {url:null, name:artName, source:'canvas-fallback'};
 }
 
 function generateRewardArt(){
