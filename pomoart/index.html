@@ -2662,6 +2662,30 @@ function pollinationsURL(prompt, width, height, opts){
   return url;
 }
 
+// デバッグログ — 画面に表示（スマホでconsole見れない問題対策）
+let _dbgLines=[];
+function dbgLog(msg){
+  console.log('[DBG]',msg);
+  _dbgLines.push(new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit',second:'2-digit'})+' '+msg);
+  if(_dbgLines.length>30)_dbgLines.shift();
+  let el=document.getElementById('dbgPanel');
+  if(!el){
+    el=document.createElement('div');
+    el.id='dbgPanel';
+    el.style.cssText='position:fixed;bottom:0;left:0;right:0;max-height:35vh;overflow-y:auto;background:rgba(0,0,0,0.9);color:#0f0;font:11px/1.4 monospace;padding:8px;z-index:99999;pointer-events:auto;';
+    const closeBtn=document.createElement('button');
+    closeBtn.textContent='✕ 閉じる';
+    closeBtn.style.cssText='position:sticky;top:0;float:right;background:#333;color:#fff;border:none;padding:2px 8px;cursor:pointer;border-radius:4px;font-size:11px;';
+    closeBtn.onclick=()=>el.remove();
+    el.appendChild(closeBtn);
+    document.body.appendChild(el);
+  }
+  const pre=el.querySelector('pre')||el.appendChild(document.createElement('pre'));
+  pre.style.cssText='margin:0;white-space:pre-wrap;word-break:break-all;';
+  pre.textContent=_dbgLines.join('\n');
+  el.scrollTop=el.scrollHeight;
+}
+
 // file:// プロトコル検出 → 起動方法を案内
 let _fileProtocolWarned=false;
 function checkFileProtocol(){
@@ -2694,25 +2718,29 @@ async function generateOneSD(prompt, mode, artName){
 
   // 2) HuggingFace（複数モデルを順に試行）
   try{
-    console.log('[HuggingFace] 生成開始:', prompt.substring(0,80)+'...');
+    dbgLog('[HF] 試行中…');
     const dataUrl=await generateWithHuggingFace(prompt);
     if(dataUrl){
-      return {url:dataUrl, name:artName};
+      dbgLog('[HF] 成功!');
+      return {url:dataUrl, name:artName, source:'huggingface'};
     }
+    dbgLog('[HF] 全モデル失敗');
   }catch(e){
-    console.warn('[HuggingFace] 失敗:', e.message||e);
+    dbgLog('[HF] 例外: '+(e.message||e));
   }
 
   // 3) Pollinations.ai フォールバック（fetchでblob取得→dataURL化）
   const pUrl=pollinationsURL(prompt, 1024, 1024, {enhance:true});
-  console.log('[Pollinations] fetch開始:', pUrl.substring(0,120));
+  dbgLog('[Poll] fetch開始… URL長='+pUrl.length);
   try{
     const ctrl=new AbortController();
     const tmr=setTimeout(()=>ctrl.abort(),90000); // 90秒タイムアウト
     const resp=await fetch(pUrl,{signal:ctrl.signal});
     clearTimeout(tmr);
+    dbgLog('[Poll] HTTP '+resp.status+' type='+resp.headers.get('content-type'));
     if(resp.ok){
       const blob=await resp.blob();
+      dbgLog('[Poll] blob size='+blob.size+' type='+blob.type);
       if(blob.size>1000 && blob.type.startsWith('image/')){
         const dataUrl=await new Promise((resolve,reject)=>{
           const reader=new FileReader();
@@ -2720,19 +2748,19 @@ async function generateOneSD(prompt, mode, artName){
           reader.onerror=reject;
           reader.readAsDataURL(blob);
         });
-        console.log('[Pollinations] fetch成功! ('+Math.round(blob.size/1024)+'KB)');
+        dbgLog('[Poll] 成功! '+Math.round(blob.size/1024)+'KB → dataURL');
         return {url:dataUrl, name:artName, source:'pollinations'};
       }
-      console.warn('[Pollinations] レスポンスが画像でない (size='+blob.size+', type='+blob.type+')');
+      dbgLog('[Poll] 画像でない — フォールバック');
     }else{
-      console.warn('[Pollinations] HTTPエラー: '+resp.status);
+      dbgLog('[Poll] HTTPエラー '+resp.status);
     }
   }catch(e){
-    console.warn('[Pollinations] fetch失敗:', e.message);
+    dbgLog('[Poll] fetch失敗: '+e.message);
   }
   // 4) 最終フォールバック: URLを直接返す（img.srcでロード試行）
-  console.log('[Pollinations] 直接URL返却（最終手段）');
-  return {url:pUrl, name:artName, source:'pollinations'};
+  dbgLog('[Poll] 直接URL返却（最終手段）');
+  return {url:pUrl, name:artName, source:'pollinations-direct'};
 }
 
 function generateRewardArt(){
@@ -2802,10 +2830,13 @@ async function generateAllSD(picks, dateStr, timeStr){
   for(let i=0;i<picks.length;i++){
     const pick=picks[i];
     try{
+      dbgLog('🔄 画像'+(i+1)+' 生成開始… mode='+pick.mode);
       const result=await generateOneSD(pick.prompt, pick.mode, pick.artName);
       rewardArts[i].imageUrl=result.url;
-      console.log('🎨 画像'+(i+1)+' 生成完了:', result.url?.substring(0,80));
+      const urlPreview=result.url?(result.url.substring(0,60)+(result.url.length>60?'...':'')):'null';
+      dbgLog('🎨 画像'+(i+1)+' 完了: src='+(result.source||'?')+' url='+urlPreview);
     }catch(e){
+      dbgLog('❌ 画像'+(i+1)+' 例外: '+e.message);
       console.warn('⚠️ 画像'+(i+1)+' ライブ生成失敗、ストックを試行:', e.message);
       // Fallback to stock
       try{
@@ -2865,11 +2896,11 @@ function displayRewardArt(){
     loading.style.display='';  // ロード中表示
     img.onload=function(){
       loading.style.display='none';
-      console.log('✅ 画像表示成功:', entry.imageUrl.substring(0,80));
+      dbgLog('✅ img.onload 成功! src長='+img.src.length);
     };
     img.onerror=function(){
       // ロード失敗 → ストックを試行 → Canvas描画にフォールバック
-      console.warn('⚠️ 画像ロード失敗、ストック試行');
+      dbgLog('❌ img.onerror! src='+entry.imageUrl.substring(0,80));
       var fallbackToCanvas=function(){
         loading.style.display='none';
         img.style.display='none';
